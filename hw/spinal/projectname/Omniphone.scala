@@ -5,12 +5,12 @@ import spinal.core._
 import spinal.lib._
 import spinal.lib.pipeline.Connection.M2S
 import spinal.lib.pipeline.{Pipeline, Stage, Stageable}
+import PipelineExtensions._
 
 import scala.language.postfixOps
 
 
 object Omniphone {
-
 
   def QuantizeWave(array: Array[Double], pcmDepth : Int) = {
 
@@ -80,10 +80,6 @@ object Omniphone {
 
     ret
   }
-
-
-
-
 }
 
 // i dont actually know what frequency this is running at???
@@ -100,62 +96,9 @@ case class OmniphoneControls() extends Bundle {
 }
 
 case class OmniphoneWaveTableUpdate(pcmDepth : Int) extends Bundle {
-
   val pcm = UInt(pcmDepth bits)
   val index = UInt(10 bits)
-
 }
-
-case class MyBundle[ParentType <: Component, InputType <: Data](owner : ParentType, input: InputType) extends Bundle {
-
-  override def clone() = {
-    val clazz = this.getClass
-    val constructor = clazz.getConstructors.head
-
-    // wants a lerper and a vec
-    constructor.newInstance(owner, input).asInstanceOf[this.type]
-  }
-
-}
-
-
-object PipelineMaker {
-
-  implicit class DataExt[DataType <: Data](that : DataType) {
-    def |~ = new StageableWithData[DataType](that)
-  }
-}
-
-import PipelineMaker.DataExt
-
-
-class StageableWithData[T <: Data](gen : => T)  extends Stageable(gen) {
-  val data = gen
-}
-
-class StageArea(implicit _pip: Pipeline) extends Stage {
-
-  ConnectToPrevious()
-
-  def ConnectToPrevious(): Unit = {
-    if(_pip.stagesSet.size > 1)
-      _pip.connect(_pip.stagesSet.takeWhile(_ != this).last, this)(M2S())
-  }
-
-  override def valCallbackRec(obj: Any, name: String): Unit = {
-    super.valCallbackRec(obj, name)
-
-    obj match {
-
-      case s : StageableWithData[_] => this(s) := s.data
-      case _ =>
-    }
-  }
-
-
-
-}
-
 
 
 class Lerper(depth : Int) extends Component {
@@ -322,3 +265,5 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends Component {
 */
 
 }
+
+
