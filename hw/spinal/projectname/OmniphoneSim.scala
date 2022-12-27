@@ -145,10 +145,8 @@ object OmniphoneSim extends App {
     dut.io.controls.valid #= true
     dut.io.controls.wavetableIndicesPerSampleIntegerPart #= rates._1
     dut.io.controls.wavetableIndicesPerSampleFractionPart #= rates._2
-    dut.io.controls.play #= true
     dut.io.controls.amplitude #= DoubleToFraction(0.25, 32)
 
-    dut.io.pcm.ready #= true
 
     dut.clockDomain.waitSampling(1000)
   }

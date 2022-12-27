@@ -77,8 +77,6 @@ object Omniphone {
     } otherwise {
       ret := integerPart
     }
-
-    ret
   }
 }
 
@@ -88,11 +86,7 @@ case class OmniphoneControls() extends Bundle {
 
   val wavetableIndicesPerSampleIntegerPart = UInt(32 bits)
   val wavetableIndicesPerSampleFractionPart = UInt(32 bits)
-
-
   val amplitude = UInt(32 bits)
-  val play = Bool()
-
 }
 
 case class OmniphoneWaveTableUpdate(pcmDepth : Int) extends Bundle {
@@ -101,12 +95,16 @@ case class OmniphoneWaveTableUpdate(pcmDepth : Int) extends Bundle {
 }
 
 
-class Lerper(depth : Int) extends Component {
+
+case class Lerper(depth : Int) extends FixedLatencyPipeline[Vec[UInt], UInt] {
 
   val io = new Bundle {
     val numbers = slave Flow Vec(UInt(depth bits), 3)
     val lerped = master Flow UInt(depth bits)
   }
+
+  override val input = io.numbers
+  override val output = io.lerped
 
   implicit val pipe = new Pipeline
 
@@ -155,27 +153,16 @@ class Lerper(depth : Int) extends Component {
 }
 
 
-class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends Component {
-
-
-  def SampleWaveTable(table: Mem[UInt], index: UInt, fraction: UInt) = new Area {
-
-    val firstSample = table.readAsync(index.resize(10 bits))
-    val secondSample = table.readAsync(index.resize(10 bits) + 1) // should wrap if length is always a power of two
-
-    val fractionSizeDifference = firstSample.getBitsWidth - fraction.getBitsWidth
-    val resizedFraction = fraction @@ U(0, fractionSizeDifference bits)
-
-    val lerpArea = lerp(firstSample, secondSample, resizedFraction)
-    val ret = lerpArea.ret
-  }
+class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends FixedLatencyPipeline[UInt, UInt] {
 
 
   val io = new Bundle {
     val uv = slave Flow UInt(64 bits)
     val sample = master Flow UInt(pcmDepth bits)
-
   }
+
+  override val input = io.uv
+  override val output = io.sample
 
 
   // stores one cycle? maybe it could store half a cycle if we assume they're symmetric
@@ -202,13 +189,16 @@ class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends Compo
 
 
 
-class Omniphone(pcmDepth : Int, sampleRate : Int) extends Component {
+class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[OmniphoneControls, UInt] {
 
 
   val io = new Bundle {
     val controls = slave Flow OmniphoneControls()
-    val pcm = master Stream UInt(pcmDepth bits)
+    val pcm = master Flow UInt(pcmDepth bits)
   }
+
+  override val input = io.controls
+  override val output = io.pcm
 
 
   if(GenerationFlags.simulation.isEnabled) {
@@ -220,49 +210,38 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends Component {
   }
 
 
-  val controls = io.controls.toReg init io.controls.payload.getZero
-  val timeScaleDepth = 32
-  val timePerPhaseUnit = 1.0 / (1L << timeScaleDepth)
-  val timePerSample = 1.0 / sampleRate
-  val phaseUnitsPerSample = timePerSample / timePerPhaseUnit // 44739 at 96000 khz
-
-  println(s"time per phase unit $timePerPhaseUnit, time per sample $timePerSample, phase units per sample $phaseUnitsPerSample")
-
-  val sampleIndex = Counter(32 bits, io.pcm.fire)
-
   // wave table indices per sample = frquency * wave table sample count / sample rate
   // 440 hz * 1024 / 96000 = 4 . 69
   // for 20,000 khz frequency the max indices per sample at this sampling rate is 213
 
   val curentWaveTablePosition = Reg( UInt(64 bits)) init 0
-  val integer = curentWaveTablePosition(32, 32 bits)
-  val fraction = curentWaveTablePosition(0, 32 bits)
-
 
   val sampler = new WaveTableSampler(1024, pcmDepth)
-  sampler.io.uv.payload := curentWaveTablePosition
-  sampler.io.uv.valid := controls.play && io.pcm.ready
 
-  sampler.io.sample.toStream >-> io.pcm
-
-  when(sampler.io.uv.fire){
-    curentWaveTablePosition := curentWaveTablePosition + (controls.wavetableIndicesPerSampleIntegerPart @@ controls.wavetableIndicesPerSampleFractionPart)
+  when(io.controls.fire) {
+    curentWaveTablePosition := curentWaveTablePosition + (io.controls.wavetableIndicesPerSampleIntegerPart @@ io.controls.wavetableIndicesPerSampleFractionPart)
   }
 
-  /*
-  val pcm = SampleWaveTable(waveTable, integer, fraction)
+  io.controls.map { in =>
 
-  when(controls.play && io.pcm.ready){
+    TupleBundle(curentWaveTablePosition, in.amplitude)
 
-    curentWaveTablePosition := curentWaveTablePosition + (controls.wavetableIndicesPerSampleIntegerPart @@ controls.wavetableIndicesPerSampleFractionPart)
+  } >=> sampler >~> { in =>
+    val sample = in._1
+    val amplitude = in._2
 
-    // now scale by amplitude which will be a fraction
-    val scaled = lerp(U(0, pcmDepth bits), pcm.ret, controls.amplitude).ret + (0xFFFFFFFFL -  controls.amplitude) / 2
+    val lerpArgs = Vec(U(0, 32 bits), sample, amplitude)
 
-    io.pcm.valid := True
-    io.pcm.payload := scaled
-  }
-*/
+    TupleBundle(lerpArgs, amplitude)
+
+  } >=> Lerper(32) >~> { out =>
+      val lerped = out._1
+      val amplitude = out._2
+
+      val scaled = lerped + (0xFFFFFFFFL - amplitude) / 2
+      scaled
+  } >-> io.pcm
+  
 
 }
 
