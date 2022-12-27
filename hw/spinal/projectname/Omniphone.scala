@@ -175,9 +175,9 @@ class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends Fixed
   val firstSample = waveTable.readSync(integerPart, io.uv.fire)
   val secondSample = waveTable.readSync(integerPart + 1, io.uv.fire)
 
-  val samplesValid = RegNext(io.uv.fire)
+  val samplesValid = RegNext(io.uv.fire) init False
 
-  val lerper = new Lerper(pcmDepth)
+  val lerper = Lerper(pcmDepth)
 
   lerper.io.numbers.payload(0) := firstSample
   lerper.io.numbers.payload(1) := secondSample
@@ -222,6 +222,9 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
     curentWaveTablePosition := curentWaveTablePosition + (io.controls.wavetableIndicesPerSampleIntegerPart @@ io.controls.wavetableIndicesPerSampleFractionPart)
   }
 
+
+
+
   io.controls.map { in =>
 
     TupleBundle(curentWaveTablePosition, in.amplitude)
@@ -241,7 +244,11 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
       val scaled = lerped + (0xFFFFFFFFL - amplitude) / 2
       scaled
   } >-> io.pcm
-  
+
+  val currentSample = Counter(32 bits, io.pcm.fire)
+  io.pcm.allowOverride()
+  io.pcm.payload := currentSample
+
 
 }
 

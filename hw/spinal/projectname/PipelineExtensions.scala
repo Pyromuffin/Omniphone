@@ -1,7 +1,7 @@
 package projectname
 
 import spinal.core._
-import spinal.lib.{Delay, Flow}
+import spinal.lib._
 import spinal.lib.pipeline.Connection.M2S
 import spinal.lib.pipeline._
 
@@ -48,6 +48,9 @@ object PipelineExtensions {
 
   }
 
+
+  case class PipelineStream[InputType <: Data, OutputType <: Data] (push : Stream[InputType], pop : Stream[OutputType])
+
   abstract class FixedLatencyPipeline[InputType <: Data, OutputType <: Data] extends Component {
 
     val input : Flow[InputType]
@@ -63,6 +66,40 @@ object PipelineExtensions {
       val propagated = propagate(data)
       output.translateWith(TupleBundle(output.payload, propagated))
     }
+
+
+    def streamWithSkidBuffer() = {
+      val skidBuffer = StreamFifo(output.payload, latency + 3) // +3 means, one for input register, one for output register, one for input to output fifo latency
+      skidBuffer.setPartialName("skidbuffer")
+      val inputStream = Stream(input.payload)
+      val outputStream = Stream(output.payload)
+
+      inputStream.ready := outputStream.ready
+      inputStream.toFlowFire >-> input
+
+      output.toStream >-> skidBuffer.io.push
+      skidBuffer.io.pop >-> outputStream
+
+      PipelineStream(inputStream, outputStream)
+    }
+
+
+    def streamWithClockEnable() = {
+      val inputStream = Stream(input.payload)
+      val outputStream = Stream(output.payload)
+
+      inputStream.ready := outputStream.ready
+      inputStream.toFlowFire >-> input
+
+      val enable = outputStream.ready
+      output.stage.toStream >> outputStream
+
+      // this probably doesn't work....
+      this.clockDomain.clockEnable := enable
+
+      PipelineStream(inputStream, outputStream)
+    }
+
 
   }
 

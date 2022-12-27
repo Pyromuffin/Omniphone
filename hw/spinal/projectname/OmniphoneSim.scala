@@ -125,10 +125,31 @@ object OmniphoneSim extends App {
   }
 
 
-  val frequency = 20000
+  val frequency = 440
   val sampleRate = 96000
 
-  Config.sim.withFstWave.compile(new Omniphone(32, sampleRate) ).doSim { dut =>
+  class omniphone_tb extends Component {
+
+    val io = new Bundle {
+      val controls = slave Stream(OmniphoneControls())
+      val pcm = master Stream(Bits(32 bits))
+    }
+
+
+
+
+    val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
+    val omniphonePCM_fifo = StreamFifo(Bits(32 bits), 100)
+    omniphonePCM_fifo.io.push.simPublic()
+
+    StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
+
+    io.controls >> omniphone.push
+    omniphonePCM_fifo.io.pop >> io.pcm
+  }
+
+
+  Config.sim.withFstWave.compile(new omniphone_tb ).doSim { dut =>
     dut.clockDomain.forkStimulus(period = 10)
 
     val rates = GetIndexRatesForFrequency(frequency, 1024, sampleRate)
@@ -148,7 +169,26 @@ object OmniphoneSim extends App {
     dut.io.controls.amplitude #= DoubleToFraction(0.25, 32)
 
 
-    dut.clockDomain.waitSampling(1000)
+    dut.io.pcm.ready #= false
+
+
+    dut.clockDomain.waitSampling(100)
+
+
+    dut.clockDomain.waitSamplingWhere(!dut.omniphonePCM_fifo.io.push.ready.toBoolean)
+
+    val randomizer = StreamReadyRandomizer(dut.io.pcm, dut.clockDomain)
+    randomizer.factor = 0.1f
+
+    var sampleIndex = 0
+
+    StreamMonitor(dut.io.pcm, dut.clockDomain) { out =>
+      assert(out.toLong == sampleIndex)
+      sampleIndex += 1
+    }
+
+
+    dut.clockDomain.waitSampling(100000)
   }
 
 }

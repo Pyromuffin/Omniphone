@@ -203,16 +203,27 @@ class Receiver extends Component {
   val secondBeatSize = RegNext(readSize - dwordsLeftForPayloadOnFirstBeat).resize(2).addAttribute("mark_debug")
 
 
-  val omniphone = new Omniphone(32, 96000)
-  omniphone.io.controls.amplitude := DoubleToFraction(0.5, 32)
+
+
+
+
+  val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
+
+  omniphone.push.amplitude := DoubleToFraction(0.5, 32)
   val frequency = GetIndexRatesForFrequency(440, 1024, 9600)
-  omniphone.io.controls.wavetableIndicesPerSampleIntegerPart := frequency._1
-  omniphone.io.controls.wavetableIndicesPerSampleFractionPart := frequency._2
-  omniphone.io.controls.valid := True
+  omniphone.push.wavetableIndicesPerSampleIntegerPart := frequency._1
+  omniphone.push.wavetableIndicesPerSampleFractionPart := frequency._2
+  omniphone.push.valid := True
 
   val omniphonePCM_fifo = StreamFifo(Bits(256 bits), 4096)
   omniphonePCM_fifo.io.pop.ready := False
-  StreamWidthAdapter(omniphone.io.pcm.stage.toStream.map(_.asBits), omniphonePCM_fifo.io.push)
+  StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
+
+
+
+
+
+
 
 
   val completionData = HandleRegisterAccess(RegNext(readAddr), readData)
