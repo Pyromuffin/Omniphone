@@ -248,9 +248,9 @@ class Receiver extends Component {
     omniphonePCM_fifo.io.pop.ready := False
     StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
     omniphonePCM_fifo.io.addAttribute("mark_debug")
+    omniphonePCM_fifo.io.flush := !play
+
   }
-
-
   import resetArea._
 
 
