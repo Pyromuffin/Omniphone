@@ -155,10 +155,8 @@ object OmniphoneSim extends App {
     val rates = GetIndexRatesForFrequency(frequency, 1024, sampleRate)
 
     dut.clockDomain.waitSampling()
+    dut.io.controls.valid #= false
 
-    dut.io.pcm.payload #= 0
-    dut.clockDomain.waitSampling()
-    dut.io.pcm.payload #= 0xFFFF_FFFFL
 
     dut.clockDomain.waitSampling(10)
 
@@ -166,7 +164,7 @@ object OmniphoneSim extends App {
     dut.io.controls.valid #= true
     dut.io.controls.wavetableIndicesPerSampleIntegerPart #= rates._1
     dut.io.controls.wavetableIndicesPerSampleFractionPart #= rates._2
-    dut.io.controls.amplitude #= DoubleToFraction(0.25, 32)
+    dut.io.controls.amplitude #= DoubleToFraction(0.1, 32)
 
 
     dut.io.pcm.ready #= false
@@ -178,15 +176,16 @@ object OmniphoneSim extends App {
     dut.clockDomain.waitSamplingWhere(!dut.omniphonePCM_fifo.io.push.ready.toBoolean)
 
     val randomizer = StreamReadyRandomizer(dut.io.pcm, dut.clockDomain)
-    randomizer.factor = 0.1f
+    //randomizer.factor = 0.1f
 
+    /*
     var sampleIndex = 0
 
     StreamMonitor(dut.io.pcm, dut.clockDomain) { out =>
       assert(out.toLong == sampleIndex)
       sampleIndex += 1
     }
-
+    */
 
     dut.clockDomain.waitSampling(100000)
   }

@@ -154,6 +154,15 @@ class Receiver extends Component {
   io.completerRequests.ready := True
 
 
+  val amplitudeFraction = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
+  val indicesPerSample = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
+  val fractionsPerSample = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
+  val play = RegInit(False).addAttribute("mark_debug")
+  val readingFifo = Bool().addAttribute("mark_debug")
+  val reset = RegInit(False).addAttribute("mark_debug")
+  readingFifo := False
+
+
   when(io.completerRequests.firstFire){
 
     // reading
@@ -170,6 +179,27 @@ class Receiver extends Component {
       val writeAddr = cq_descriptor.address(0, 12 bits)
       val dwords = io.completerRequests.data.subdivideIn(32 bits)
       val writeData = dwords(4).resized // 5th dword, the first four dwords are the descriptor
+
+      when(writeAddr === 0x300) {
+        amplitudeFraction := writeData.asUInt
+      }
+
+      when(writeAddr === 0x301) {
+        indicesPerSample := writeData.asUInt
+      }
+
+      when(writeAddr === 0x302) {
+        fractionsPerSample := writeData.asUInt
+      }
+
+      when(writeAddr === 0x303) {
+        play := writeData(0)
+      }
+
+      when(writeAddr === 0x304) {
+        reset := writeData(0)
+      }
+
 
       mem.write(writeAddr, writeData.resize(256))
     }
@@ -204,29 +234,28 @@ class Receiver extends Component {
 
 
 
+  val resetArea = new ResetArea(reset, true){
+    val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
+
+    omniphone.push.wavetableIndicesPerSampleIntegerPart := indicesPerSample
+    omniphone.push.wavetableIndicesPerSampleFractionPart := fractionsPerSample
+    omniphone.push.amplitude := amplitudeFraction
+    omniphone.push.valid := play
+
+    omniphone.pop.addAttribute("mark_debug")
+
+    val omniphonePCM_fifo = StreamFifo(Bits(256 bits), 4096)
+    omniphonePCM_fifo.io.pop.ready := False
+    StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
+    omniphonePCM_fifo.io.addAttribute("mark_debug")
+  }
+
+
+  import resetArea._
 
 
 
-  val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
-
-  omniphone.push.amplitude := DoubleToFraction(0.5, 32)
-  val frequency = GetIndexRatesForFrequency(440, 1024, 9600)
-  omniphone.push.wavetableIndicesPerSampleIntegerPart := frequency._1
-  omniphone.push.wavetableIndicesPerSampleFractionPart := frequency._2
-  omniphone.push.valid := True
-
-  val omniphonePCM_fifo = StreamFifo(Bits(256 bits), 4096)
-  omniphonePCM_fifo.io.pop.ready := False
-  StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
-
-
-
-
-
-
-
-
-  val completionData = HandleRegisterAccess(RegNext(readAddr), readData)
+  val completionData = HandleRegisterAccess(RegNext(readAddr), readData, readDataValid)
   completionData.addAttribute("mark_debug")
 
   when(singleBeatCompletion && readDataValid) {
@@ -274,7 +303,7 @@ class Receiver extends Component {
 
 
 
-  def HandleRegisterAccess(address: UInt, data: Bits): Bits = {
+  def HandleRegisterAccess(address: UInt, data: Bits, requestValid : Bool): Bits = {
 
     val ret = data.clone()
     ret := data
@@ -289,8 +318,11 @@ class Receiver extends Component {
 
     when(address === 0x200) {
       ret := omniphonePCM_fifo.io.pop.payload
-      omniphonePCM_fifo.io.pop.ready := True
 
+      when(requestValid){
+        omniphonePCM_fifo.io.pop.ready := True
+        readingFifo := True
+      }
     }
 
     ret

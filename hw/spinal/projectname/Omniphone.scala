@@ -201,13 +201,7 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
   override val output = io.pcm
 
 
-  if(GenerationFlags.simulation.isEnabled) {
-    io.pcm.valid := False
-    io.pcm.payload := 0xFFFF_FFFFL
-    when(RegNext(io.pcm.payload === 0xFFFF_FFFFL) && !io.controls.valid) {
-      io.pcm.payload := 0 // please god
-    }
-  }
+
 
 
   // wave table indices per sample = frquency * wave table sample count / sample rate
@@ -221,8 +215,6 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
   when(io.controls.fire) {
     curentWaveTablePosition := curentWaveTablePosition + (io.controls.wavetableIndicesPerSampleIntegerPart @@ io.controls.wavetableIndicesPerSampleFractionPart)
   }
-
-
 
 
   io.controls.map { in =>
@@ -245,10 +237,19 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
       scaled
   } >-> io.pcm
 
-  val currentSample = Counter(32 bits, io.pcm.fire)
-  io.pcm.allowOverride()
-  io.pcm.payload := currentSample
 
+  val starting = Counter(4, True)
+  val started = RegInit(False) setWhen starting.willOverflow
+
+  if (GenerationFlags.simulation.isEnabled) {
+    when(!started) {
+      io.pcm.valid := False
+      io.pcm.payload := 0xFFFF_FFFFL
+      when(RegNext(io.pcm.payload === 0xFFFF_FFFFL) && !io.controls.valid) {
+        io.pcm.payload := 0 // please god
+      }
+    }
+  }
 
 }
 
