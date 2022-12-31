@@ -122,20 +122,10 @@ class Receiver extends Component {
 
   val requestCount = Counter(32 bits, io.completerRequests.firstFire)
   val completionCount = Counter(32 bits, io.completerCompletions.firstFire)
-
-
-  requestCount.value.addAttribute("mark_debug")
-  completionCount.value.addAttribute("mark_debug")
-
-
   io.nonpostedRequestAllowed := True
-  io.nonpostedRequestAllowed.addAttribute("mark_debug")
-  io.nonpostedRequestCount.addAttribute("mark_debug")
-  io.completerRequests.addAttribute("mark_debug")
-  io.completerCompletions.addAttribute("mark_debug")
+
 
   val cq_descriptor = io.completerRequests.data.as(XilinxPCIE_CQ_Descriptor())
-  cq_descriptor.addAttribute("mark_debug")
 
   io.completerCompletions.payload := io.completerCompletions.getZero
   io.completerCompletions.valid := False
@@ -143,25 +133,32 @@ class Receiver extends Component {
   val nonPostedRequest = Reg(XilinxPCIE_CQ_Descriptor())
 
   val mem = Mem(Bits(256 bits), 4096)
-  val readAddr = UInt(12 bits).addAttribute("mark_debug"); readAddr.assignDontCare()
-  val readEnable = Bool().addAttribute("mark_debug")
-  val readSize = Reg(UInt(4 bits)).addAttribute("mark_debug")
-  val readDataValid = RegNext(readEnable).addAttribute("mark_debug") init False
+  val readAddr = UInt(12 bits); readAddr.assignDontCare()
+  val readEnable = Bool()
+  val readSize = Reg(UInt(4 bits))
+  val readDataValid = RegNext(readEnable) init False
   readEnable := False
 
   val readData = mem.readSync(readAddr, readEnable)
-  readData.addAttribute("mark_debug")
   io.completerRequests.ready := True
 
+  val omniphoneCount = 8
 
-  val amplitudeFraction = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
-  val indicesPerSample = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
-  val fractionsPerSample = Reg( UInt(32 bits) ).addAttribute("mark_debug") init 0
-  val play = RegInit(False).addAttribute("mark_debug")
-  val readingFifo = Bool().addAttribute("mark_debug")
+
   val reset = RegInit(False).addAttribute("mark_debug")
-  readingFifo := False
 
+  val controlsArea = new ResetArea(reset, true){
+    val controlSets = Vec(Reg(OmniphoneControls()), omniphoneCount)
+    val playControls = Vec(RegInit(False), omniphoneCount)
+    controlSets.addAttribute("mark_debug")
+    playControls.addAttribute("mark_debug")
+  }
+
+  import controlsArea._
+
+
+  val readingFifo = Bool().addAttribute("mark_debug")
+  readingFifo := False
 
   when(io.completerRequests.firstFire){
 
@@ -180,24 +177,31 @@ class Receiver extends Component {
       val dwords = io.completerRequests.data.subdivideIn(32 bits)
       val writeData = dwords(4).resized // 5th dword, the first four dwords are the descriptor
 
-      when(writeAddr === 0x300) {
-        amplitudeFraction := writeData.asUInt
+
+      for(i <- 0 until omniphoneCount){
+        when(writeAddr === 0x300 + 0x10 * i + 0) {
+          controlSets(i).amplitude := writeData.asUInt
+        }
+
+        when(writeAddr === 0x300 + 0x10 * i + 1) {
+          controlSets(i).wavetableIndicesPerSampleIntegerPart := writeData.asUInt
+        }
+
+        when(writeAddr === 0x300 + 0x10 * i + 2) {
+          controlSets(i).wavetableIndicesPerSampleFractionPart := writeData.asUInt
+        }
+
+        when(writeAddr === 0x300 + 0x10 * i + 3) {
+          playControls(i) := writeData(0)
+        }
       }
 
-      when(writeAddr === 0x301) {
-        indicesPerSample := writeData.asUInt
-      }
 
-      when(writeAddr === 0x302) {
-        fractionsPerSample := writeData.asUInt
-      }
 
-      when(writeAddr === 0x303) {
-        play := writeData(0)
-      }
-
-      when(writeAddr === 0x304) {
+      when(writeAddr === 0x100) {
         reset := writeData(0)
+        completionCount.clear()
+        requestCount.clear()
       }
 
 
@@ -206,7 +210,7 @@ class Receiver extends Component {
   }
 
 
-  val cc_descriptor = XilinxPCIE_CC_Descriptor().addAttribute("mark_debug")
+  val cc_descriptor = XilinxPCIE_CC_Descriptor()
   cc_descriptor.allowOverride()
 
   cc_descriptor := cc_descriptor.getZero
@@ -227,29 +231,44 @@ class Receiver extends Component {
   val dwordsLeftForPayloadOnFirstBeat = 5
 
   val singleBeatCompletion = readSize <= dwordsLeftForPayloadOnFirstBeat
-  singleBeatCompletion.addAttribute("mark_debug")
-  val secondBeatValid = RegNext(readDataValid && !singleBeatCompletion).addAttribute("mark_debug") init False
-  val secondBeatData = Reg(Bits(96 bits)).addAttribute("mark_debug") // 3 dwords left over from a max of 8 dword read
-  val secondBeatSize = RegNext(readSize - dwordsLeftForPayloadOnFirstBeat).resize(2).addAttribute("mark_debug")
+  val secondBeatValid = RegNext(readDataValid && !singleBeatCompletion) init False
+  val secondBeatData = Reg(Bits(96 bits)) // 3 dwords left over from a max of 8 dword read
+  val secondBeatSize = RegNext(readSize - dwordsLeftForPayloadOnFirstBeat).resize(2)
 
 
 
   val resetArea = new ResetArea(reset, true){
-    val omniphone = new OmniphoneChannel(32, 96000).streamWithSkidBuffer()
 
-    omniphone.push.wavetableIndicesPerSampleIntegerPart := indicesPerSample
-    omniphone.push.wavetableIndicesPerSampleFractionPart := fractionsPerSample
-    omniphone.push.amplitude := amplitudeFraction
-    omniphone.push.valid := play
+    // figure out how to use the pipeline skidbuffer interface for this
+    // unfortunately the extension i made only handles a single input and output
+    // where this one has many inputs and a single output, but basically works as if all the inputs are or'd together
+    // so we can still use the latency calculation for the pipeline
 
-    omniphone.pop.addAttribute("mark_debug")
+    val omniphone = new MultiOmniphone(32, 96000, omniphoneCount)
+    omniphone.io.addAttribute("mark_debug")
 
-    val omniphonePCM_fifo = StreamFifo(Bits(256 bits), 4096)
+    val omniphonePCM_fifo = StreamFifo(Bits(256 bits), 2)
+
+    for(i <- 0 until omniphoneCount){
+      omniphone.io.controls(i).payload := controlSets(i)
+      omniphone.io.controls(i).valid := playControls(i) && omniphonePCM_fifo.io.push.ready
+    }
+
+    val skidBuffer = StreamFifo(omniphone.output.payload, omniphone.latency + 3)
+
+    val overflow = Bool()
+    val overflowed = RegInit(False) setWhen(overflow)
+    overflowed.addAttribute("mark_debug")
+
+    omniphone.io.pcm.toStream(overflow) >> skidBuffer.io.push
+
     omniphonePCM_fifo.io.pop.ready := False
-    StreamWidthAdapter(omniphone.pop.stage.map(_.asBits), omniphonePCM_fifo.io.push)
-    omniphonePCM_fifo.io.addAttribute("mark_debug")
-    omniphonePCM_fifo.io.flush := !play
+    StreamWidthAdapter(skidBuffer.io.pop.map(_.asBits), omniphonePCM_fifo.io.push)
 
+    val stop = !playControls.reduceBalancedTree( _ || _ )
+    stop.addAttribute("mark_debug")
+    omniphonePCM_fifo.io.flush := stop
+    skidBuffer.io.flush := stop
   }
   import resetArea._
 

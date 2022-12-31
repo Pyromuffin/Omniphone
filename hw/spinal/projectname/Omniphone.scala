@@ -188,34 +188,65 @@ class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends Fixed
 }
 
 
-/*
-class MultiOmniphone(pcmDepth : Int, channelCount : Int) extends FixedLatencyPipeline {
+class MultiOmniphone(pcmDepth : Int, sampleRate : Int, channelCount : Int) extends FixedLatencyPipeline[OmniphoneControls, SInt] {
 
   val io = new Bundle {
     val controls = Vec(slave Flow OmniphoneControls(), channelCount)
-    val pcm = master Flow UInt(pcmDepth bits)
+    val pcm = master Flow SInt(pcmDepth bits)
   }
 
-  override val input = io.controls
+  override val input = io.controls(0)
   override val output = io.pcm
 
-
-  val omniphones = Array.tabulate(channelCount) { i =>
-    val channel = new OmniphoneChannel(pcmDepth, 96000)
-    io.controls(i) >-> channel.io.controls
+  val omniphones = Vec.tabulate(channelCount) { i =>
+    val channel = new OmniphoneChannel(pcmDepth, sampleRate)
+      io.controls(i) >-> channel.io.controls
+    channel.io.pcm
   }
-
 
   val mixer = new Area {
+    // m, n-bit numbers
+    val largestNumber = (1L << pcmDepth) - 1
+    val precisionForSum = log2Up(channelCount * largestNumber) + 1
+    val stages = log2Up(channelCount)
+
+
+    omniphones(0).addAttribute("mark_debug")
+    omniphones(1).addAttribute("mark_debug")
+
+    val channelCodes = omniphones.map(_.payload.resize(precisionForSum bits))
+    val channelValids = omniphones.map(_.valid)
 
 
 
+
+    // vivado retiming, please... i beg
+    val sum = channelCodes.reduceBalancedTree(_ + _)
+    val sumValid = channelValids.reduceBalancedTree(_ || _)
+
+    val sum_delayed = Delay(sum, stages)
+    val sumValid_delayed = Delay(sumValid, stages, init = False)
+
+    val clipNegative = sum_delayed <= SInt(pcmDepth bits).minValue
+    val clipPositive = sum_delayed >= SInt(pcmDepth bits).maxValue
+
+
+    val outputFlow = Flow(SInt(pcmDepth bits))
+    outputFlow.payload := sum_delayed.resized
+
+    when(clipPositive) {
+      outputFlow.payload := SInt(pcmDepth bits).maxValue
+    } elsewhen(clipNegative) {
+      outputFlow.payload := SInt(pcmDepth bits).minValue
+    }
+
+    outputFlow.valid := sumValid_delayed
   }
 
-
+  mixer.outputFlow >-> io.pcm
 
 }
-*/
+
 
 
 class OmniphoneChannel(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[OmniphoneControls, SInt] {
@@ -228,9 +259,6 @@ class OmniphoneChannel(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPip
 
   override val input = io.controls
   override val output = io.pcm
-
-
-
 
 
   // wave table indices per sample = frquency * wave table sample count / sample rate
@@ -262,18 +290,21 @@ class OmniphoneChannel(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPip
 
     // uhh turn this into a signed integer somehow.
 
-      val lerped = out._1
-      val amplitude = out._2
+    val lerped = out._1
+    val amplitude = out._2
 
 
-      // i hope computer will optimize this
-      val scaled = lerped + (0xFFFFFFFFL - amplitude) / 2
-      val half = S(0x7FFFFFFFL, 33 bits)
-      val signed = S(scaled, 33 bits)
+    // i hope computer will optimize this
+    val scaled = lerped + (0xFFFFFFFFL - amplitude) / 2
+    val half = S(0x7FFFFFFFL, 33 bits)
+    val signed = S(scaled, 33 bits)
 
     (signed - half).resize(32 bits)
   } >-> io.pcm
 
+  when(!io.pcm.valid) {
+    io.pcm.payload := 0
+  }
 
   val starting = Counter(4, True)
   val started = RegInit(False) setWhen starting.willOverflow

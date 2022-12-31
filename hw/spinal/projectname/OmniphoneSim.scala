@@ -125,7 +125,8 @@ object OmniphoneSim extends App {
   }
 
 
-  val frequency = 440
+  val frequency0 = 440
+  val frequency1 = 880
   val sampleRate = 96000
 
   class omniphone_tb extends Component {
@@ -138,7 +139,7 @@ object OmniphoneSim extends App {
 
 
 
-    val omniphone = new OmniphoneChannel(32, 96000).streamWithSkidBuffer()
+    val omniphone = new MultiOmniphone(32, 96000, 2).streamWithSkidBuffer()
     val omniphonePCM_fifo = StreamFifo(Bits(32 bits), 100)
     omniphonePCM_fifo.io.push.simPublic()
 
@@ -149,33 +150,39 @@ object OmniphoneSim extends App {
   }
 
 
-  Config.sim.withFstWave.compile(new omniphone_tb ).doSim { dut =>
+  Config.sim.withFstWave.compile(new MultiOmniphone(32, 96000, 2) ).doSim { dut =>
     dut.clockDomain.forkStimulus(period = 10)
 
-    val rates = GetIndexRatesForFrequency(frequency, 1024, sampleRate)
+    val rate0 = GetIndexRatesForFrequency(frequency0, 1024, sampleRate)
+    val rate1 = GetIndexRatesForFrequency(frequency1, 1024, sampleRate)
 
     dut.clockDomain.waitSampling()
-    dut.io.controls.valid #= false
+    dut.io.controls(0).valid #= false
+    dut.io.controls(1).valid #= false
 
 
     dut.clockDomain.waitSampling(10)
 
 
-    dut.io.controls.valid #= true
-    dut.io.controls.wavetableIndicesPerSampleIntegerPart #= rates._1
-    dut.io.controls.wavetableIndicesPerSampleFractionPart #= rates._2
-    dut.io.controls.amplitude #= DoubleToFraction(1, 32)
+    dut.io.controls(0).valid #= true
+    dut.io.controls(0).wavetableIndicesPerSampleIntegerPart #= rate0._1
+    dut.io.controls(0).wavetableIndicesPerSampleFractionPart #= rate0._2
+    dut.io.controls(0).amplitude #= DoubleToFraction(1, 32)
 
 
-    dut.io.pcm.ready #= false
-
+    //dut.io.pcm.ready #= false
 
     dut.clockDomain.waitSampling(100)
 
+    dut.io.controls(1).valid #= true
+    dut.io.controls(1).wavetableIndicesPerSampleIntegerPart #= rate1._1
+    dut.io.controls(1).wavetableIndicesPerSampleFractionPart #= rate1._2
+    dut.io.controls(1).amplitude #= DoubleToFraction(0.5, 32)
 
-    dut.clockDomain.waitSamplingWhere(!dut.omniphonePCM_fifo.io.push.ready.toBoolean)
 
-    val randomizer = StreamReadyRandomizer(dut.io.pcm, dut.clockDomain)
+    //dut.clockDomain.waitSamplingWhere(!dut.omniphonePCM_fifo.io.push.ready.toBoolean)
+
+    //val randomizer = StreamReadyRandomizer(dut.io.pcm, dut.clockDomain)
     //randomizer.factor = 0.1f
 
     /*
