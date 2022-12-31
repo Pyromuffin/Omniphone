@@ -235,7 +235,7 @@ class Receiver extends Component {
 
 
   val resetArea = new ResetArea(reset, true){
-    val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
+    val omniphone = new OmniphoneChannel(32, 96000).streamWithSkidBuffer()
 
     omniphone.push.wavetableIndicesPerSampleIntegerPart := indicesPerSample
     omniphone.push.wavetableIndicesPerSampleFractionPart := fractionsPerSample

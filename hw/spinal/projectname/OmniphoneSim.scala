@@ -14,7 +14,7 @@ object LerpSim extends App {
 
   def DoubleToFraction( d : Double, depth : Int ) = {
 
-    val largest = (1L << depth)
+    val largest = (1L << depth) - 1
     (largest * d).toLong
   }
 
@@ -138,7 +138,7 @@ object OmniphoneSim extends App {
 
 
 
-    val omniphone = new Omniphone(32, 96000).streamWithSkidBuffer()
+    val omniphone = new OmniphoneChannel(32, 96000).streamWithSkidBuffer()
     val omniphonePCM_fifo = StreamFifo(Bits(32 bits), 100)
     omniphonePCM_fifo.io.push.simPublic()
 
@@ -164,7 +164,7 @@ object OmniphoneSim extends App {
     dut.io.controls.valid #= true
     dut.io.controls.wavetableIndicesPerSampleIntegerPart #= rates._1
     dut.io.controls.wavetableIndicesPerSampleFractionPart #= rates._2
-    dut.io.controls.amplitude #= DoubleToFraction(0.1, 32)
+    dut.io.controls.amplitude #= DoubleToFraction(1, 32)
 
 
     dut.io.pcm.ready #= false

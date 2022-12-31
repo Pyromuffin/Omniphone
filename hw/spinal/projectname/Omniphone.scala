@@ -188,13 +188,42 @@ class WaveTableSampler(waveTableSampleCount : Int, pcmDepth : Int) extends Fixed
 }
 
 
+/*
+class MultiOmniphone(pcmDepth : Int, channelCount : Int) extends FixedLatencyPipeline {
 
-class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[OmniphoneControls, UInt] {
+  val io = new Bundle {
+    val controls = Vec(slave Flow OmniphoneControls(), channelCount)
+    val pcm = master Flow UInt(pcmDepth bits)
+  }
+
+  override val input = io.controls
+  override val output = io.pcm
+
+
+  val omniphones = Array.tabulate(channelCount) { i =>
+    val channel = new OmniphoneChannel(pcmDepth, 96000)
+    io.controls(i) >-> channel.io.controls
+  }
+
+
+  val mixer = new Area {
+
+
+
+  }
+
+
+
+}
+*/
+
+
+class OmniphoneChannel(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[OmniphoneControls, SInt] {
 
 
   val io = new Bundle {
     val controls = slave Flow OmniphoneControls()
-    val pcm = master Flow UInt(pcmDepth bits)
+    val pcm = master Flow SInt(pcmDepth bits)
   }
 
   override val input = io.controls
@@ -230,11 +259,19 @@ class Omniphone(pcmDepth : Int, sampleRate : Int) extends FixedLatencyPipeline[O
     TupleBundle(lerpArgs, amplitude)
 
   } >=> Lerper(32) >~> { out =>
+
+    // uhh turn this into a signed integer somehow.
+
       val lerped = out._1
       val amplitude = out._2
 
+
+      // i hope computer will optimize this
       val scaled = lerped + (0xFFFFFFFFL - amplitude) / 2
-      scaled
+      val half = S(0x7FFFFFFFL, 33 bits)
+      val signed = S(scaled, 33 bits)
+
+    (signed - half).resize(32 bits)
   } >-> io.pcm
 
 
